@@ -97,8 +97,8 @@ app.get("/api/health", (req, res) => {
 });
 
 // Payments
-const paymentRoutes = require("./Models/Payments");
-app.use(paymentRoutes);
+//const paymentRoutes = require("./Models/Payments");
+//app.use(paymentRoutes);
 
 // Code Executor
 app.use("/api", codeExecutorRoutes);

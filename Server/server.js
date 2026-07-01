@@ -13,7 +13,8 @@ const { initPassport } = require("./oauth");
 const { upload, transcribeAudio, transcribeStream } = require("./whisper");
 const codeExecutorRoutes = require("./routes/codeExecutor");
 const { initProfileRoutes } = require("./routes/profile");
-const { evaluateResponse } = require("./utils/openaiService");
+const { evaluateResponse, generateHRQuestion, generateTechnicalQuestions } = require("./utils/openaiService");
+const { PDFParse } = require("pdf-parse");
 
 require("dotenv").config();
 
@@ -574,6 +575,27 @@ app.post("/api/transcribe/stream", upload.single("audio"), transcribeStream);
 
 const { uploadToSupabase, deleteFromSupabase } = require('./utils/storageService');
 
+// Multer setup for document memory storage (Resume/JD uploads)
+const uploadDocumentMemory = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = [
+      'application/pdf',
+      'text/plain',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/msword'
+    ];
+    if (allowedTypes.includes(file.mimetype) || file.originalname.endsWith('.pdf') || file.originalname.endsWith('.txt') || file.originalname.endsWith('.docx') || file.originalname.endsWith('.doc')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only PDF, TXT, and Word documents are allowed.'));
+    }
+  }
+});
+
 // Multer setup for memory storage (we'll upload to Supabase)
 const uploadRecordingMemory = multer({ 
   storage: multer.memoryStorage(),
@@ -700,6 +722,49 @@ app.delete("/api/recordings/:id", authenticateToken, async (req, res) => {
       message: "Error deleting recording",
       error: err.message 
     });
+  }
+});
+
+// Get a random HR question
+app.get("/api/interview/questions/hr", authenticateToken, async (req, res) => {
+  try {
+    const question = await generateHRQuestion();
+    res.json({ success: true, question });
+  } catch (err) {
+    console.error("❌ Error generating HR question:", err);
+    res.status(500).json({ success: false, message: "Error generating question", error: err.message });
+  }
+});
+
+// Generate custom technical questions from Resume or JD
+app.post("/api/interview/questions/technical", authenticateToken, uploadDocumentMemory.single("file"), async (req, res) => {
+  try {
+    let extractedText = "";
+
+    if (req.file) {
+      console.log(`📄 Received document upload for analysis: ${req.file.originalname} (${req.file.mimetype})`);
+      if (req.file.mimetype === 'application/pdf') {
+        const parser = new PDFParse({ data: req.file.buffer });
+        const parsed = await parser.getText();
+        extractedText = parsed.text;
+      } else {
+        // Fallback/standard txt reading
+        extractedText = req.file.buffer.toString('utf-8');
+      }
+    } else if (req.body.text) {
+      console.log(`📝 Received raw text input for technical question generation`);
+      extractedText = req.body.text;
+    }
+
+    if (!extractedText || extractedText.trim().length === 0) {
+      return res.status(400).json({ success: false, message: "No text content found in file or request body." });
+    }
+
+    const questions = await generateTechnicalQuestions(extractedText);
+    res.json({ success: true, questions });
+  } catch (err) {
+    console.error("❌ Error generating technical questions:", err);
+    res.status(500).json({ success: false, message: "Error generating technical questions", error: err.message });
   }
 });
 

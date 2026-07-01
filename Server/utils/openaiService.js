@@ -117,4 +117,230 @@ Evaluate the response objectively. Provide the feedback ONLY as a valid JSON obj
   }
 }
 
-module.exports = { evaluateResponse };
+/**
+ * Fallback questions lists
+ */
+const FALLBACK_HR_QUESTIONS = [
+  {
+    id: "hr_fallback_1",
+    category: "Behavioral",
+    difficulty: "Medium",
+    title: "Tell me about a challenging project you worked on",
+    description: "Describe a project that presented significant challenges and how you overcame them. Focus on your problem-solving approach, the obstacles you faced, and the final outcome.",
+    keyPoints: [
+      "Describe the project context and your role",
+      "Explain the specific challenges you encountered", 
+      "Detail your approach to solving these challenges",
+      "Share the outcome and what you learned",
+      "Reflect on how this experience has shaped your approach to future projects"
+    ],
+    tips: [
+      "Use the STAR method (Situation, Task, Action, Result)",
+      "Be specific about your contributions",
+      "Focus on your problem-solving process",
+      "Mention measurable outcomes when possible",
+      "Show growth and learning from the experience"
+    ],
+    timeLimit: "3-5 minutes recommended"
+  },
+  {
+    id: "hr_fallback_2",
+    category: "Behavioral",
+    difficulty: "Medium",
+    title: "Describe a time you had to deal with a conflict in a team",
+    description: "Explain a situation where you had a disagreement or conflict with a peer or teammate, and how you handled it.",
+    keyPoints: [
+      "State the context and what caused the conflict",
+      "Explain your strategy for resolving it objectively",
+      "Detail the resulting compromise or agreement",
+      "Reflect on what you learned from this experience"
+    ],
+    tips: [
+      "Do not criticize or speak negatively of colleagues",
+      "Emphasize communication and compromise",
+      "Focus on alignment towards team goals"
+    ],
+    timeLimit: "3-5 minutes recommended"
+  },
+  {
+    id: "hr_fallback_3",
+    category: "Behavioral",
+    difficulty: "Hard",
+    title: "Tell me about a time you failed and how you handled it",
+    description: "Describe a specific instance where your performance fell short of expectations, or a task did not succeed. Detail how you reacted, resolved the situation, and grew from it.",
+    keyPoints: [
+      "Set the scene and own the failure",
+      "Detail the immediate actions taken to mitigate the failure",
+      "Explain the key learnings and how you applied them later"
+    ],
+    tips: [
+      "Choose a genuine mistake, not a disguised strength",
+      "Take responsibility; avoid blaming others",
+      "Emphasize growth and positive actions since then"
+    ],
+    timeLimit: "3-5 minutes recommended"
+  }
+];
+
+const FALLBACK_TECH_QUESTIONS = [
+  {
+    id: "tech_fallback_1",
+    category: "Technical (Data Structures)",
+    difficulty: "Medium",
+    title: "Implement a function to find the lowest common ancestor in a Binary Tree",
+    description: "Given a binary tree, find the lowest common ancestor (LCA) of two given nodes in the tree. Explain the time and space complexity of your approach.",
+    keyPoints: [
+      "Traverse the tree recursively or iteratively",
+      "Identify the base cases (null, matching nodes)",
+      "Combine left and right search results"
+    ],
+    tips: [
+      "Clarify if it is a Binary Search Tree (BST) or standard Binary Tree",
+      "State the space complexity of the call stack recursion"
+    ],
+    timeLimit: "10-15 minutes recommended"
+  },
+  {
+    id: "tech_fallback_2",
+    category: "Technical (System Design)",
+    difficulty: "Hard",
+    title: "Design a distributed rate limiter",
+    description: "How would you design a distributed rate limiter for a high-traffic web API? Explain the algorithm (Token Bucket, Sliding Window Log) and storage replication choices.",
+    keyPoints: [
+      "Outline the rate limiter algorithm and choices",
+      "Explain how to handle concurrency and replication (e.g. using Redis)",
+      "Detail rate limiter placement (API gateway, middleware)"
+    ],
+    tips: [
+      "Discuss network latency overhead of calling Redis",
+      "Cover how to handle rate-limiting edge cases"
+    ],
+    timeLimit: "15-20 minutes recommended"
+  },
+  {
+    id: "tech_fallback_3",
+    category: "Technical (Web Development)",
+    difficulty: "Medium",
+    title: "Explain the virtual DOM and reconciliation process in React",
+    description: "Explain how React uses a Virtual DOM to optimize DOM updates, and how the Diffing algorithm and Reconciliation works.",
+    keyPoints: [
+      "Describe the render phase vs commit phase",
+      "Explain element diffing keys and types",
+      "State how state updates queue rendering"
+    ],
+    tips: [
+      "Discuss why React keys are critical for performance",
+      "Distinguish between React 18 concurrent features and legacy rendering"
+    ],
+    timeLimit: "5-10 minutes recommended"
+  }
+];
+
+/**
+ * Generates a random HR question using OpenAI
+ */
+async function generateHRQuestion() {
+  if (!openai) {
+    const idx = Math.floor(Math.random() * FALLBACK_HR_QUESTIONS.length);
+    return FALLBACK_HR_QUESTIONS[idx];
+  }
+
+  try {
+    const prompt = `Generate a high-quality HR or behavioral interview question. It should assess soft skills, leadership, conflict resolution, teamwork, or growth mindset.
+Provide the question ONLY as a valid JSON object matching this exact schema:
+{
+  "id": "string", // Random generated ID e.g. "hr_random_xyz"
+  "category": "Behavioral",
+  "difficulty": "Easy" | "Medium" | "Hard",
+  "title": "Question text here",
+  "description": "Elaborate description of what the candidate should discuss",
+  "keyPoints": ["string", "string", ...], // 3-4 key points they should cover
+  "tips": ["string", "string", ...], // 3-4 tips for answering
+  "timeLimit": "3-5 minutes recommended"
+}`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "You are an AI assistant specialized in generating interview assessments. You output valid JSON objects matching the schema provided."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.8,
+      max_tokens: 400
+    });
+
+    const question = JSON.parse(completion.choices[0].message.content);
+    return question;
+  } catch (error) {
+    console.error("❌ OpenAI HR question generation failed, using fallback:", error.message);
+    const idx = Math.floor(Math.random() * FALLBACK_HR_QUESTIONS.length);
+    return FALLBACK_HR_QUESTIONS[idx];
+  }
+}
+
+/**
+ * Generates 3 customized technical questions using OpenAI based on resume/JD text
+ */
+async function generateTechnicalQuestions(documentText) {
+  if (!openai) {
+    return FALLBACK_TECH_QUESTIONS;
+  }
+
+  try {
+    const prompt = `You are a technical interviewer. Analyze the following candidate document (Resume or Job Description) and generate exactly 3 custom technical interview questions that assess relevant skills (algorithms, coding, system design, framework-specific knowledge, or core engineering concepts).
+Candidate Document Content:
+"${documentText.substring(0, 4000)}"
+
+Provide the response ONLY as a valid JSON array of objects, containing exactly 3 objects. Schema for each object:
+{
+  "id": "string", // e.g. "tech_cust_1"
+  "category": "string", // e.g. "Technical (System Design)"
+  "difficulty": "Easy" | "Medium" | "Hard",
+  "title": "Question Title",
+  "description": "Specific details, instructions, or inputs/outputs of the question",
+  "keyPoints": ["string", "string", ...], // 3-4 key points to answer
+  "tips": ["string", "string", ...], // 3-4 helpful tips
+  "timeLimit": "string" // e.g., "15 minutes recommended"
+}`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "You are an AI assistant specialized in generating customized technical interview questions. You output valid JSON arrays matching the schema provided."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.7,
+      max_tokens: 1000
+    });
+
+    const result = JSON.parse(completion.choices[0].message.content);
+    
+    // Check if questions are wrapped in an object key
+    let questions = Array.isArray(result) ? result : result.questions || result.data || Object.values(result)[0];
+    
+    if (!Array.isArray(questions)) {
+      throw new Error("JSON response did not parse as an array");
+    }
+
+    return questions.slice(0, 3);
+  } catch (error) {
+    console.error("❌ OpenAI Technical question generation failed, using fallback:", error.message);
+    return FALLBACK_TECH_QUESTIONS;
+  }
+}
+
+module.exports = { evaluateResponse, generateHRQuestion, generateTechnicalQuestions };

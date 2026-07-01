@@ -289,85 +289,6 @@ async function executeNode(code, language) {
   }
 }
 
-// Execute C code
-async function executeC(code) {
-  const tempId = crypto.randomBytes(16).toString('hex');
-  const sourceFile = path.join(TEMP_DIR, `${tempId}.c`);
-  const executableFile = path.join(TEMP_DIR, `${tempId}`);
-  
-  try {
-    await fs.writeFile(sourceFile, code);
-    
-    // Compile
-    const compileResult = await new Promise((resolve) => {
-      const compileProcess = spawn('gcc', ['-o', executableFile, sourceFile], { timeout: 10000 });
-      let error = '';
-      
-      compileProcess.stderr.on('data', (data) => {
-        error += data.toString();
-      });
-      
-      compileProcess.on('close', (code) => {
-        resolve({ success: code === 0, error });
-      });
-      
-      compileProcess.on('error', (err) => {
-        resolve({ success: false, error: err.message });
-      });
-    });
-    
-    if (!compileResult.success) {
-      await cleanup([sourceFile, executableFile]);
-      return {
-        success: false,
-        output: `Compilation error: ${compileResult.error}`,
-        exitCode: -1
-      };
-    }
-    
-    // Execute
-    return new Promise((resolve) => {
-      const process = spawn(executableFile, [], { timeout: 10000 });
-      let output = '';
-      let error = '';
-      
-      process.stdout.on('data', (data) => {
-        output += data.toString();
-      });
-      
-      process.stderr.on('data', (data) => {
-        error += data.toString();
-      });
-      
-      process.on('close', async (code) => {
-        await cleanup([sourceFile, executableFile]);
-        
-        resolve({
-          success: code === 0 && !error,
-          output: error || output || 'No output',
-          exitCode: code
-        });
-      });
-      
-      process.on('error', async (err) => {
-        await cleanup([sourceFile, executableFile]);
-        
-        resolve({
-          success: false,
-          output: `Execution error: ${err.message}`,
-          exitCode: -1
-        });
-      });
-    });
-  } catch (error) {
-    return {
-      success: false,
-      output: `File operation error: ${error.message}`,
-      exitCode: -1
-    };
-  }
-}
-
 // Helper functions
 function extractJavaClassName(code) {
   const match = code.match(/public\s+class\s+(\w+)/);
@@ -404,16 +325,6 @@ router.post('/execute', async (req, res) => {
         break;
       case 'javascript':
         result = await executeNode(code, language);
-        break;
-      case 'c':
-        try {
-          result = await executeC(code);
-        } catch (error) {
-          result = {
-            success: false,
-            output: 'C compiler not available on this server. Try JavaScript or Python instead.'
-          };
-        }
         break;
       case 'java':
         try {
@@ -458,4 +369,4 @@ router.post('/execute', async (req, res) => {
   }
 });
 
-module.exports = { router, executePython, executeJava, executeCpp, executeC, executeNode };
+module.exports = router;

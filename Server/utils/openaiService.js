@@ -1,10 +1,59 @@
 const OpenAI = require('openai');
 
 let openai = null;
-if (process.env.OPENAI_API_KEY) {
-  openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
+const isGeminiKey = (key) => key && (key.startsWith("AQ.") || key.startsWith("AIzaSy"));
+
+if (process.env.OPENAI_API_KEY && !isGeminiKey(process.env.OPENAI_API_KEY)) {
+  try {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  } catch (err) {
+    console.error("⚠️ Failed to initialize OpenAI client in openaiService:", err.message);
+  }
+}
+
+/**
+ * Call Gemini API directly via fetch
+ */
+async function callGemini(prompt, responseJson = true) {
+  const apiKey = process.env.GEMINI_API_KEY || (isGeminiKey(process.env.OPENAI_API_KEY) ? process.env.OPENAI_API_KEY : null);
+  if (!apiKey) {
+    throw new Error("No Gemini API key available");
+  }
+
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  const payload = {
+    contents: [{
+      parts: [{ text: prompt }]
+    }]
+  };
+
+  if (responseJson) {
+    payload.generationConfig = {
+      responseMimeType: "application/json"
+    };
+  }
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
   });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`Gemini API returned ${response.status}: ${errText}`);
+  }
+
+  const result = await response.json();
+  if (!result.candidates || !result.candidates[0] || !result.candidates[0].content || !result.candidates[0].content.parts || !result.candidates[0].content.parts[0]) {
+    throw new Error("Invalid response format from Gemini API");
+  }
+
+  return result.candidates[0].content.parts[0].text;
 }
 
 /**
@@ -62,13 +111,9 @@ function generateLocalEvaluation(question, responseText, category, difficulty) {
  * Evaluates candidate response using OpenAI or falls back locally
  */
 async function evaluateResponse(question, responseText, category = "General", difficulty = "Medium") {
-  if (!openai) {
-    console.log("⚠️ OpenAI service not initialized. Using local evaluation fallback.");
-    return generateLocalEvaluation(question, responseText, category, difficulty);
-  }
+  const hasGeminiKey = !!(process.env.GEMINI_API_KEY || isGeminiKey(process.env.OPENAI_API_KEY));
   
-  try {
-    const prompt = `You are a premium AI Interview Trainer. Analyze the candidate's answer to the following question.
+  const prompt = `You are a premium AI Interview Trainer. Analyze the candidate's answer to the following question.
 Question Category: ${category}
 Question Difficulty: ${difficulty}
 Question: "${question}"
@@ -82,39 +127,49 @@ Evaluate the response objectively. Provide the feedback ONLY as a valid JSON obj
   "summary": "string" // A concise 2-3 sentence summary feedback for the candidate
 }`;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: "You are an AI assistant specialized in conducting interview assessments. You analyze interview text responses and provide constructive feedback in structured JSON format only."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.7,
-      max_tokens: 500
-    });
-
-    const content = completion.choices[0].message.content;
-    const evaluation = JSON.parse(content);
-    
-    // Validate fields
-    if (typeof evaluation.score !== 'number' || !Array.isArray(evaluation.strengths) || !Array.isArray(evaluation.improvements) || typeof evaluation.summary !== 'string') {
-      throw new Error("Invalid output format from OpenAI API response");
+  if (hasGeminiKey) {
+    try {
+      console.log("🚀 Generating evaluation using Google Gemini API...");
+      const content = await callGemini(prompt, true);
+      const evaluation = JSON.parse(content);
+      evaluation.score = parseFloat(Math.min(10.0, Math.max(1.0, evaluation.score)).toFixed(1));
+      return evaluation;
+    } catch (geminiError) {
+      console.error("❌ Gemini evaluation failed:", geminiError.message);
     }
-    
-    // Normalize score
-    evaluation.score = parseFloat(Math.min(10.0, Math.max(1.0, evaluation.score)).toFixed(1));
-    return evaluation;
-
-  } catch (error) {
-    console.error("❌ OpenAI assessment failed, using local evaluation:", error.message);
-    return generateLocalEvaluation(question, responseText, category, difficulty);
   }
+
+  if (openai) {
+    try {
+      console.log("🚀 Generating evaluation using OpenAI API...");
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are an AI assistant specialized in conducting interview assessments. You analyze interview text responses and provide constructive feedback in structured JSON format only."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.7,
+        max_tokens: 500
+      });
+
+      const content = completion.choices[0].message.content;
+      const evaluation = JSON.parse(content);
+      evaluation.score = parseFloat(Math.min(10.0, Math.max(1.0, evaluation.score)).toFixed(1));
+      return evaluation;
+    } catch (error) {
+      console.error("❌ OpenAI assessment failed:", error.message);
+    }
+  }
+
+  console.log("⚠️ Both API engines failed or are missing credentials. Using local evaluation fallback.");
+  return generateLocalEvaluation(question, responseText, category, difficulty);
 }
 
 /**
@@ -237,16 +292,12 @@ const FALLBACK_TECH_QUESTIONS = [
 ];
 
 /**
- * Generates a random HR question using OpenAI
+ * Generates a random HR question using OpenAI or Gemini
  */
 async function generateHRQuestion() {
-  if (!openai) {
-    const idx = Math.floor(Math.random() * FALLBACK_HR_QUESTIONS.length);
-    return FALLBACK_HR_QUESTIONS[idx];
-  }
-
-  try {
-    const prompt = `Generate a high-quality HR or behavioral interview question. It should assess soft skills, leadership, conflict resolution, teamwork, or growth mindset.
+  const hasGeminiKey = !!(process.env.GEMINI_API_KEY || isGeminiKey(process.env.OPENAI_API_KEY));
+  
+  const prompt = `Generate a high-quality HR or behavioral interview question. It should assess soft skills, leadership, conflict resolution, teamwork, or growth mindset.
 Provide the question ONLY as a valid JSON object matching this exact schema:
 {
   "id": "string", // Random generated ID e.g. "hr_random_xyz"
@@ -259,42 +310,54 @@ Provide the question ONLY as a valid JSON object matching this exact schema:
   "timeLimit": "3-5 minutes recommended"
 }`;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: "You are an AI assistant specialized in generating interview assessments. You output valid JSON objects matching the schema provided."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.8,
-      max_tokens: 400
-    });
-
-    const question = JSON.parse(completion.choices[0].message.content);
-    return question;
-  } catch (error) {
-    console.error("❌ OpenAI HR question generation failed, using fallback:", error.message);
-    const idx = Math.floor(Math.random() * FALLBACK_HR_QUESTIONS.length);
-    return FALLBACK_HR_QUESTIONS[idx];
+  if (hasGeminiKey) {
+    try {
+      console.log("🚀 Generating random HR question using Google Gemini API...");
+      const content = await callGemini(prompt, true);
+      return JSON.parse(content);
+    } catch (err) {
+      console.error("❌ Gemini HR question generation failed:", err.message);
+    }
   }
+
+  if (openai) {
+    try {
+      console.log("🚀 Generating random HR question using OpenAI API...");
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are an AI assistant specialized in generating interview assessments. You output valid JSON objects matching the schema provided."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.8,
+        max_tokens: 400
+      });
+
+      const question = JSON.parse(completion.choices[0].message.content);
+      return question;
+    } catch (error) {
+      console.error("❌ OpenAI HR question generation failed, using fallback:", error.message);
+    }
+  }
+
+  const idx = Math.floor(Math.random() * FALLBACK_HR_QUESTIONS.length);
+  return FALLBACK_HR_QUESTIONS[idx];
 }
 
 /**
- * Generates 3 customized technical questions using OpenAI based on resume/JD text
+ * Generates 3 customized technical questions using OpenAI or Gemini based on resume/JD text
  */
 async function generateTechnicalQuestions(documentText) {
-  if (!openai) {
-    return FALLBACK_TECH_QUESTIONS;
-  }
-
-  try {
-    const prompt = `You are a technical interviewer. Analyze the following candidate document (Resume or Job Description) and generate exactly 3 custom technical interview questions that assess relevant skills (algorithms, coding, system design, framework-specific knowledge, or core engineering concepts).
+  const hasGeminiKey = !!(process.env.GEMINI_API_KEY || isGeminiKey(process.env.OPENAI_API_KEY));
+  
+  const prompt = `You are a technical interviewer. Analyze the following candidate document (Resume or Job Description) and generate exactly 3 custom technical interview questions that assess relevant skills (algorithms, coding, system design, framework-specific knowledge, or core engineering concepts).
 Candidate Document Content:
 "${documentText.substring(0, 4000)}"
 
@@ -310,208 +373,54 @@ Provide the response ONLY as a valid JSON array of objects, containing exactly 3
   "timeLimit": "string" // e.g., "15 minutes recommended"
 }`;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: "You are an AI assistant specialized in generating customized technical interview questions. You output valid JSON arrays matching the schema provided."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.7,
-      max_tokens: 1000
-    });
-
-    const result = JSON.parse(completion.choices[0].message.content);
-    
-    // Check if questions are wrapped in an object key
-    let questions = Array.isArray(result) ? result : result.questions || result.data || Object.values(result)[0];
-    
-    if (!Array.isArray(questions)) {
-      throw new Error("JSON response did not parse as an array");
+  if (hasGeminiKey) {
+    try {
+      console.log("🚀 Generating technical questions using Google Gemini API...");
+      const content = await callGemini(prompt, true);
+      const result = JSON.parse(content);
+      let questions = Array.isArray(result) ? result : result.questions || result.data || Object.values(result)[0];
+      if (Array.isArray(questions)) {
+        return questions.slice(0, 3);
+      }
+    } catch (err) {
+      console.error("❌ Gemini technical question generation failed:", err.message);
     }
-
-    return questions.slice(0, 3);
-  } catch (error) {
-    console.error("❌ OpenAI Technical question generation failed, using fallback:", error.message);
-    return FALLBACK_TECH_QUESTIONS;
-  }
-}
-
-/**
- * AI review for coding solution submissions
- */
-async function evaluateCodingSubmission(problem, code, language, executionResult) {
-  if (!openai) {
-    return {
-      correctness: executionResult.passed ? "Looks Correct" : "Incorrect",
-      codeQuality: "Pending Review",
-      timeComplexity: "Unknown",
-      spaceComplexity: "Unknown",
-      readability: "Medium",
-      naming: "Standard",
-      optimizationOpportunities: "Could not evaluate without API key.",
-      interviewReadiness: "Needs Review",
-      detailedReview: "Please add your API key to enable AI Code Review feedback."
-    };
   }
 
-  try {
-    const prompt = `You are a Principal Software Engineer conducting a coding interview. Analyze the candidate's submission for the following problem.
+  if (openai) {
+    try {
+      console.log("🚀 Generating technical questions using OpenAI API...");
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: "You are an AI assistant specialized in generating customized technical interview questions. You output valid JSON arrays matching the schema provided."
+          },
+          {
+            role: "user",
+            content: prompt
+          }
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.7,
+        max_tokens: 1000
+      });
 
-Problem: ${problem.title}
-Difficulty: ${problem.difficulty}
-Category: ${problem.category}
-Description: ${problem.description}
-
-Candidate Submission:
-Language: ${language}
-Code:
-${code}
-
-Execution Result:
-Passed Test Cases: ${executionResult.passedCount} / ${executionResult.totalCount}
-Status: ${executionResult.status}
-Stdout/Output: ${executionResult.output}
-
-Provide structured feedback inside a valid JSON object matching this schema exactly:
-{
-  "correctness": "Brief summary of correctness",
-  "codeQuality": "Review of quality, modularity, and comments",
-  "timeComplexity": "Big O time complexity notation e.g. O(N)",
-  "spaceComplexity": "Big O space complexity notation e.g. O(1)",
-  "readability": "Readability evaluation (High/Medium/Low)",
-  "naming": "Evaluation of variable and function naming conventions",
-  "optimizationOpportunities": "Any structural or logic enhancements",
-  "interviewReadiness": "Interview readiness feedback (e.g. 'Strong Keep', 'Hire', 'Borderline', 'Needs Practice')",
-  "detailedReview": "Detailed constructive review paragraphs addressing pros and cons of the candidate's solution."
-}`;
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: "You are an expert technical interviewer reviewing coding solutions. Output valid JSON objects matching the schema provided."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.2,
-      max_tokens: 800
-    });
-
-    return JSON.parse(completion.choices[0].message.content);
-  } catch (error) {
-    console.error("❌ OpenAI code review failed, using fallback:", error.message);
-    return {
-      correctness: executionResult.passed ? "Looks Correct" : "Incorrect",
-      codeQuality: "Fallback Heuristics",
-      timeComplexity: "O(N) Estimated",
-      spaceComplexity: "O(1) Estimated",
-      readability: "Medium",
-      naming: "Standard",
-      optimizationOpportunities: "Optimizations check failed due to API limitations.",
-      interviewReadiness: "Borderline",
-      detailedReview: "Heuristic fallback feedback: Ensure you trace edge cases and verify time constraints manually."
-    };
-  }
-}
-
-/**
- * AI Problem generator to spawn interview coding problems
- */
-async function generateAICodingProblem(role, company, topic, difficulty) {
-  if (!openai) {
-    throw new Error("OpenAI API key is missing. AI coding problem generation requires a valid API key.");
-  }
-
-  try {
-    const prompt = `Generate a high-quality, professional technical interview coding problem based on the following context:
-Role: ${role}
-Company: ${company}
-Topic/Topic Area: ${topic}
-Difficulty: ${difficulty}
-
-Output ONLY as a valid JSON object matching this schema:
-{
-  "title": "Problem Title",
-  "difficulty": "Easy" | "Medium" | "Hard",
-  "category": "Topic Name",
-  "acceptance": "e.g. 50.0%",
-  "description": "HTML description of the coding challenge, including problem details. Use <code>, <pre>, <strong>, and <em> for clean rendering.",
-  "examples": [
-    {
-      "input": "String input notation",
-      "output": "Expected output notation",
-      "explanation": "Optional short explanation of Example"
+      const result = JSON.parse(completion.choices[0].message.content);
+      
+      // Check if questions are wrapped in an object key
+      let questions = Array.isArray(result) ? result : result.questions || result.data || Object.values(result)[0];
+      
+      if (Array.isArray(questions)) {
+        return questions.slice(0, 3);
+      }
+    } catch (error) {
+      console.error("❌ OpenAI Technical question generation failed, using fallback:", error.message);
     }
-  ],
-  "constraints": ["Constraint 1", "Constraint 2"],
-  "followUp": "Optional follow-up question or optimization prompt",
-  "starterCode": {
-    "javascript": "Starter code function structure",
-    "python": "Starter code structure",
-    "java": "Starter code structure",
-    "cpp": "Starter code structure",
-    "c": "Starter code structure"
-  },
-  "testCases": [
-    { "input": "input representation string (e.g. '[2,7,11,15], 9')", "expected": "expected output string (e.g. '[0,1]')" },
-    { "input": "input representation string", "expected": "expected output string" },
-    { "input": "input representation string", "expected": "expected output string" }
-  ],
-  "testRunners": {
-    "javascript": "__USER_CODE__\\nconsole.log(JSON.stringify(FUNCTION_NAME(INPUT)));",
-    "python": "__USER_CODE__\\nimport json\\nprint(json.dumps(FUNCTION_NAME(INPUT)))",
-    "cpp": "Complete cpp runner text embedding __USER_CODE__ and parsing/running case...",
-    "java": "Complete java runner text embedding __USER_CODE__ ...",
-    "c": "Complete c runner text embedding __USER_CODE__ ..."
   }
+
+  return FALLBACK_TECH_QUESTIONS;
 }
 
-IMPORTANT Instructions:
-- Choose the function name carefully and ensure it is consistent across starterCode, testCases, and testRunners.
-- Replace FUNCTION_NAME with the actual function (e.g. twoSum) and INPUT with the test case arguments.
-- In cpp, java, and c runners, write the complete scaffolding class or Main class. Make sure that __USER_CODE__ is injected properly and the test cases parse. Use standard placeholder replacements if needed (e.g. replace __TEST_INPUT__ with test case values).`;
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: "You are an AI specialized in generating professional programming interview problems. Output valid JSON objects only."
-        },
-        {
-          role: "user",
-          content: prompt
-        }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0.7,
-      max_tokens: 2000
-    });
-
-    const problem = JSON.parse(completion.choices[0].message.content);
-    
-    // Add additional meta
-    problem.isAI = true;
-    problem.role = [role];
-    problem.company = [company];
-    
-    return problem;
-  } catch (error) {
-    console.error("❌ OpenAI coding question generation failed:", error.message);
-    throw error;
-  }
-}
-
-module.exports = { evaluateResponse, generateHRQuestion, generateTechnicalQuestions, evaluateCodingSubmission, generateAICodingProblem };
+module.exports = { evaluateResponse, generateHRQuestion, generateTechnicalQuestions };

@@ -703,6 +703,335 @@ router.get('/profile/activity', async (req, res) => {
   }
 });
 
+// Get user's dashboard statistics
+router.get('/profile/dashboard', async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // 1. Fetch user details
+    const user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // 2. Fetch all interview responses for streak and performance summary
+    const responses = await db.collection('interview_responses')
+      .find({ userId: new ObjectId(userId) })
+      .sort({ 'metadata.createdAt': -1 })
+      .toArray();
+
+    // 3. Fetch recordings for streak
+    const recordings = await db.collection('recordings')
+      .find({ userId: new ObjectId(userId) })
+      .toArray();
+
+    // Setup defaults
+    let lastInterview = null;
+    let streak = 0;
+    let lastPracticed = "Never";
+    let performanceSummary = {
+      accuracyRate: 0,
+      weakestArea: "None",
+      averageScore: 0
+    };
+    let badges = [];
+    let recommendations = {
+      weakestArea: "Algorithms",
+      practiceCount: 5
+    };
+
+    // Calculate dates of activity for streak
+    const activityDates = new Set();
+    responses.forEach(r => {
+      if (r.metadata && r.metadata.createdAt) {
+        activityDates.add(new Date(r.metadata.createdAt).toDateString());
+      }
+    });
+    recordings.forEach(rec => {
+      if (rec.createdAt) {
+        activityDates.add(new Date(rec.createdAt).toDateString());
+      }
+    });
+
+    const sortedDates = Array.from(activityDates)
+      .map(d => new Date(d))
+      .sort((a, b) => b - a);
+
+    if (sortedDates.length > 0) {
+      // Calculate relative last practiced time
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const activityDate = new Date(sortedDates[0]);
+      activityDate.setHours(0, 0, 0, 0);
+      
+      const diffTime = Math.abs(today - activityDate);
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      
+      if (diffDays === 0) {
+        lastPracticed = "Today";
+      } else if (diffDays === 1) {
+        lastPracticed = "Yesterday";
+      } else {
+        lastPracticed = `${diffDays} days ago`;
+      }
+
+      // Calculate streak
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      if (activityDate.getTime() === today.getTime() || activityDate.getTime() === yesterday.getTime()) {
+        streak = 1;
+        let currentDate = activityDate;
+        
+        for (let i = 1; i < sortedDates.length; i++) {
+          const prevDate = new Date(currentDate);
+          prevDate.setDate(prevDate.getDate() - 1);
+          
+          const compareDate = new Date(sortedDates[i]);
+          compareDate.setHours(0, 0, 0, 0);
+          
+          if (compareDate.getTime() === prevDate.getTime()) {
+            streak++;
+            currentDate = compareDate;
+          } else if (compareDate.getTime() === currentDate.getTime()) {
+            continue;
+          } else {
+            break;
+          }
+        }
+      }
+    }
+
+    if (responses.length > 0) {
+      // Last Interview
+      const last = responses[0];
+      const evalData = last.evaluation || {
+        score: last.response.confidence ? parseFloat((last.response.confidence * 10).toFixed(1)) : 7.0,
+        strengths: last.question.category === "Behavioral" ? ["STAR structure", "Clear communication"] : ["Good code syntax", "Correct approach"],
+        improvements: last.question.category === "Behavioral" ? ["Add quantifiable results"] : ["Explain complexity in more detail"],
+        summary: "Solid response to the interview question."
+      };
+
+      // Format Date
+      const dateOptions = { day: '2-digit', month: 'short', year: 'numeric' };
+      const formattedDate = new Date(last.metadata.createdAt).toLocaleDateString('en-GB', dateOptions);
+
+      lastInterview = {
+        date: formattedDate,
+        position: last.question.category || "General",
+        strengths: evalData.strengths.join ? evalData.strengths.join(", ") : evalData.strengths,
+        improvements: evalData.improvements.join ? evalData.improvements.join(", ") : evalData.improvements,
+        score: evalData.score
+      };
+
+      // Performance summary calculations
+      let totalScore = 0;
+      const categoryScores = {};
+
+      responses.forEach(r => {
+        const itemScore = r.evaluation?.score || (r.response.confidence ? r.response.confidence * 10 : 7.0);
+        totalScore += itemScore;
+
+        const cat = r.question.category || "General";
+        if (!categoryScores[cat]) {
+          categoryScores[cat] = { sum: 0, count: 0 };
+        }
+        categoryScores[cat].sum += itemScore;
+        categoryScores[cat].count += 1;
+      });
+
+      const avgScore = totalScore / responses.length;
+      performanceSummary.averageScore = parseFloat(avgScore.toFixed(1));
+      performanceSummary.accuracyRate = Math.round(avgScore * 10);
+
+      // Find weakest category
+      let minAvg = 100;
+      let weakest = "None";
+      Object.keys(categoryScores).forEach(cat => {
+        const catAvg = categoryScores[cat].sum / categoryScores[cat].count;
+        if (catAvg < minAvg) {
+          minAvg = catAvg;
+          weakest = cat;
+        }
+      });
+      performanceSummary.weakestArea = weakest;
+
+      recommendations = {
+        weakestArea: weakest !== "None" ? weakest : "Algorithms",
+        practiceCount: weakest !== "None" ? Math.round(10 - minAvg) || 5 : 5
+      };
+
+      // Badge calculations (achievements)
+      if (responses.length >= 1) {
+        badges.push({ id: 'first_interview', icon: '🎯', name: 'First Interview' });
+      }
+      const highConfidenceCount = responses.filter(r => r.response.confidence >= 0.8).length;
+      if (highConfidenceCount >= 3) {
+        badges.push({ id: 'confident_speaker', icon: '💪', name: 'Confident Speaker' });
+      }
+      if (responses.length >= 10) {
+        badges.push({ id: 'regular_practice', icon: '🔥', name: 'Practice Master' });
+      }
+      if (recordings.length >= 1) {
+        badges.push({ id: 'video_recorded', icon: '📹', name: 'Screen Ready' });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        user: {
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email
+        },
+        lastInterview,
+        streak,
+        lastPracticed,
+        performanceSummary,
+        badges,
+        recommendations
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching dashboard stats:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch dashboard statistics',
+      error: error.message
+    });
+  }
+});
+
+// Get candidate interview report details
+router.get('/interview/report', async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    // Fetch all interview responses for the user
+    const responses = await db.collection('interview_responses')
+      .find({ userId: new ObjectId(userId) })
+      .sort({ 'metadata.createdAt': 1 }) // Chronological order
+      .toArray();
+
+    if (responses.length === 0) {
+      return res.json({
+        success: true,
+        data: null // Handled as empty state in client
+      });
+    }
+
+    const topicsCovered = Array.from(new Set(responses.map(r => r.question.category || "General")));
+
+    // Calculate performance per topic
+    const categoryStats = {};
+    responses.forEach(r => {
+      const cat = r.question.category || "General";
+      const score = r.evaluation?.score || (r.response.confidence ? r.response.confidence * 10 : 7.0);
+      const feedback = r.evaluation?.summary || "Good progression.";
+      
+      if (!categoryStats[cat]) {
+        categoryStats[cat] = {
+          topic: cat,
+          scoresSum: 0,
+          count: 0,
+          analyses: []
+        };
+      }
+      categoryStats[cat].scoresSum += score;
+      categoryStats[cat].count += 1;
+      categoryStats[cat].analyses.push(feedback);
+    });
+
+    const topicAnalysis = Object.keys(categoryStats).map(cat => {
+      const stats = categoryStats[cat];
+      const avgScore = Math.round((stats.scoresSum / stats.count) * 10); // scale out of 100
+      
+      let analysisText = "";
+      if (avgScore >= 80) {
+        analysisText = `Excellent command of ${cat} concepts. Able to provide robust and clear answers under pressure.`;
+      } else if (avgScore >= 60) {
+        analysisText = `Solid understanding of ${cat}. Focus on structuring responses more cleanly and handling edge cases.`;
+      } else {
+        analysisText = `Requires focus on ${cat}. Review fundamental topics, prepare structured templates, and practice talking through solutions.`;
+      }
+
+      return {
+        topic: cat,
+        score: avgScore,
+        analysis: stats.analyses[stats.analyses.length - 1] || analysisText
+      };
+    });
+
+    // Progress trend: last 6 response scores
+    const progress = responses.map(r => {
+      const score = r.evaluation?.score || (r.response.confidence ? r.response.confidence * 10 : 7.0);
+      return Math.round(score * 10); // scale out of 100
+    }).slice(-6); // Take the last 6 responses
+
+    // Dynamic pros & cons based on topic analysis
+    const pros = [];
+    const cons = [];
+    
+    topicAnalysis.forEach(ta => {
+      if (ta.score >= 80) {
+        pros.push(`Excellent understanding of ${ta.topic} principles`);
+      } else if (ta.score < 70) {
+        cons.push(`Needs more practice and structural clarity in ${ta.topic}`);
+      }
+    });
+
+    // Fallbacks if lists are empty
+    if (pros.length === 0) {
+      pros.push("Shows strong dedication and regular practice pacing");
+      pros.push("Consistently records and reviews voice confidence levels");
+    }
+    if (cons.length === 0) {
+      cons.push("Keep practicing to sustain confidence score above 90%");
+      cons.push("Focus on time management in hard-rated questions");
+    }
+
+    // Overall summary and suggestions
+    const overallAvgScore = topicAnalysis.reduce((sum, ta) => sum + ta.score, 0) / topicAnalysis.length;
+    
+    let summary = `The candidate has practiced ${responses.length} mock interviews. Overall performance is solid, averaging ${overallAvgScore.toFixed(0)}%. `;
+    let suggestions = "";
+
+    if (overallAvgScore >= 80) {
+      summary += "Demonstrates high confidence, strong vocabulary, and coherent problem-solving capability across covered topics.";
+      suggestions = "Recommend focusing on advanced interview questions and practice Mock interviews with time restrictions to emulate pressure.";
+    } else if (overallAvgScore >= 60) {
+      summary += "Exhibits good understanding of major concepts but can improve response structured delivery and explanation details.";
+      suggestions = "Recommend using the STAR method for behavioral questions and explicitly outlining time/space trade-offs for technical questions.";
+    } else {
+      summary += "Requires additional conceptual reinforcement and pacing practice to improve structure and reduce hesitations.";
+      suggestions = "Recommend focusing on topic-by-topic revisions, reviewing correct mock explanations, and writing down structured summaries before speaking.";
+    }
+
+    res.json({
+      success: true,
+      data: {
+        topicsCovered,
+        topicAnalysis,
+        progress,
+        summary,
+        pros,
+        cons,
+        suggestions
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching interview report:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch interview report analytics',
+      error: error.message
+    });
+  }
+});
+
 // Delete user account (with proper data cleanup)
 router.delete('/profile/account', async (req, res) => {
   try {

@@ -12,6 +12,7 @@
   "description": "",
   "dependencies": {
     "@supabase/supabase-js": "^2.75.1",
+    "axios": "^1.18.1",
     "bcryptjs": "^3.0.2",
     "braintree": "^3.33.1",
     "cors": "^2.8.5",

@@ -11,10 +11,12 @@ const multer = require("multer");
 const { createAuthFunctions, generateToken, verifyToken } = require("./auth");
 const { initPassport } = require("./oauth");
 const { upload, transcribeAudio, transcribeStream } = require("./whisper");
-const codeExecutorRoutes = require("./routes/codeExecutor");
+const { router: codeExecutorRoutes } = require("./routes/codeExecutor");
 const { initProfileRoutes } = require("./routes/profile");
 const { evaluateResponse, generateHRQuestion, generateTechnicalQuestions } = require("./utils/openaiService");
 const { PDFParse } = require("pdf-parse");
+const { initCodingRoutes } = require("./routes/coding");
+const { seedCodingProblems } = require("./utils/problemSeeder");
 
 require("dotenv").config();
 
@@ -55,9 +57,14 @@ MongoClient.connect(process.env.DB_URL)
     authFunctions = createAuthFunctions(db);
     initPassport(db);
     profileRoutes = initProfileRoutes(db);
+    const codingRouter = initCodingRoutes(db);
     
-    // Initialize profile routes after DB connection
+    // Initialize profile and coding routes after DB connection
     app.use("/api", authenticateToken, profileRoutes);
+    app.use("/api/coding", codingRouter);
+    
+    // Seed initial coding problems if needed
+    seedCodingProblems(db);
     
     console.log("DB connection successful!! ✅");
   })

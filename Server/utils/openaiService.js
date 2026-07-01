@@ -343,4 +343,175 @@ Provide the response ONLY as a valid JSON array of objects, containing exactly 3
   }
 }
 
-module.exports = { evaluateResponse, generateHRQuestion, generateTechnicalQuestions };
+/**
+ * AI review for coding solution submissions
+ */
+async function evaluateCodingSubmission(problem, code, language, executionResult) {
+  if (!openai) {
+    return {
+      correctness: executionResult.passed ? "Looks Correct" : "Incorrect",
+      codeQuality: "Pending Review",
+      timeComplexity: "Unknown",
+      spaceComplexity: "Unknown",
+      readability: "Medium",
+      naming: "Standard",
+      optimizationOpportunities: "Could not evaluate without API key.",
+      interviewReadiness: "Needs Review",
+      detailedReview: "Please add your API key to enable AI Code Review feedback."
+    };
+  }
+
+  try {
+    const prompt = `You are a Principal Software Engineer conducting a coding interview. Analyze the candidate's submission for the following problem.
+
+Problem: ${problem.title}
+Difficulty: ${problem.difficulty}
+Category: ${problem.category}
+Description: ${problem.description}
+
+Candidate Submission:
+Language: ${language}
+Code:
+${code}
+
+Execution Result:
+Passed Test Cases: ${executionResult.passedCount} / ${executionResult.totalCount}
+Status: ${executionResult.status}
+Stdout/Output: ${executionResult.output}
+
+Provide structured feedback inside a valid JSON object matching this schema exactly:
+{
+  "correctness": "Brief summary of correctness",
+  "codeQuality": "Review of quality, modularity, and comments",
+  "timeComplexity": "Big O time complexity notation e.g. O(N)",
+  "spaceComplexity": "Big O space complexity notation e.g. O(1)",
+  "readability": "Readability evaluation (High/Medium/Low)",
+  "naming": "Evaluation of variable and function naming conventions",
+  "optimizationOpportunities": "Any structural or logic enhancements",
+  "interviewReadiness": "Interview readiness feedback (e.g. 'Strong Keep', 'Hire', 'Borderline', 'Needs Practice')",
+  "detailedReview": "Detailed constructive review paragraphs addressing pros and cons of the candidate's solution."
+}`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "You are an expert technical interviewer reviewing coding solutions. Output valid JSON objects matching the schema provided."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.2,
+      max_tokens: 800
+    });
+
+    return JSON.parse(completion.choices[0].message.content);
+  } catch (error) {
+    console.error("❌ OpenAI code review failed, using fallback:", error.message);
+    return {
+      correctness: executionResult.passed ? "Looks Correct" : "Incorrect",
+      codeQuality: "Fallback Heuristics",
+      timeComplexity: "O(N) Estimated",
+      spaceComplexity: "O(1) Estimated",
+      readability: "Medium",
+      naming: "Standard",
+      optimizationOpportunities: "Optimizations check failed due to API limitations.",
+      interviewReadiness: "Borderline",
+      detailedReview: "Heuristic fallback feedback: Ensure you trace edge cases and verify time constraints manually."
+    };
+  }
+}
+
+/**
+ * AI Problem generator to spawn interview coding problems
+ */
+async function generateAICodingProblem(role, company, topic, difficulty) {
+  if (!openai) {
+    throw new Error("OpenAI API key is missing. AI coding problem generation requires a valid API key.");
+  }
+
+  try {
+    const prompt = `Generate a high-quality, professional technical interview coding problem based on the following context:
+Role: ${role}
+Company: ${company}
+Topic/Topic Area: ${topic}
+Difficulty: ${difficulty}
+
+Output ONLY as a valid JSON object matching this schema:
+{
+  "title": "Problem Title",
+  "difficulty": "Easy" | "Medium" | "Hard",
+  "category": "Topic Name",
+  "acceptance": "e.g. 50.0%",
+  "description": "HTML description of the coding challenge, including problem details. Use <code>, <pre>, <strong>, and <em> for clean rendering.",
+  "examples": [
+    {
+      "input": "String input notation",
+      "output": "Expected output notation",
+      "explanation": "Optional short explanation of Example"
+    }
+  ],
+  "constraints": ["Constraint 1", "Constraint 2"],
+  "followUp": "Optional follow-up question or optimization prompt",
+  "starterCode": {
+    "javascript": "Starter code function structure",
+    "python": "Starter code structure",
+    "java": "Starter code structure",
+    "cpp": "Starter code structure",
+    "c": "Starter code structure"
+  },
+  "testCases": [
+    { "input": "input representation string (e.g. '[2,7,11,15], 9')", "expected": "expected output string (e.g. '[0,1]')" },
+    { "input": "input representation string", "expected": "expected output string" },
+    { "input": "input representation string", "expected": "expected output string" }
+  ],
+  "testRunners": {
+    "javascript": "__USER_CODE__\\nconsole.log(JSON.stringify(FUNCTION_NAME(INPUT)));",
+    "python": "__USER_CODE__\\nimport json\\nprint(json.dumps(FUNCTION_NAME(INPUT)))",
+    "cpp": "Complete cpp runner text embedding __USER_CODE__ and parsing/running case...",
+    "java": "Complete java runner text embedding __USER_CODE__ ...",
+    "c": "Complete c runner text embedding __USER_CODE__ ..."
+  }
+}
+
+IMPORTANT Instructions:
+- Choose the function name carefully and ensure it is consistent across starterCode, testCases, and testRunners.
+- Replace FUNCTION_NAME with the actual function (e.g. twoSum) and INPUT with the test case arguments.
+- In cpp, java, and c runners, write the complete scaffolding class or Main class. Make sure that __USER_CODE__ is injected properly and the test cases parse. Use standard placeholder replacements if needed (e.g. replace __TEST_INPUT__ with test case values).`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "You are an AI specialized in generating professional programming interview problems. Output valid JSON objects only."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0.7,
+      max_tokens: 2000
+    });
+
+    const problem = JSON.parse(completion.choices[0].message.content);
+    
+    // Add additional meta
+    problem.isAI = true;
+    problem.role = [role];
+    problem.company = [company];
+    
+    return problem;
+  } catch (error) {
+    console.error("❌ OpenAI coding question generation failed:", error.message);
+    throw error;
+  }
+}
+
+module.exports = { evaluateResponse, generateHRQuestion, generateTechnicalQuestions, evaluateCodingSubmission, generateAICodingProblem };

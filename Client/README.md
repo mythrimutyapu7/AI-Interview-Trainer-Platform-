@@ -50,11 +50,4 @@ npm run build
 npm run preview
 ```
 
-## Key Features
 
-- Protected routes with authentication
-- Responsive design for all devices
-- Real-time code execution
-- Voice-to-text interview capabilities
-- Payment integration for premium features
-- Session management and recordings dashboard

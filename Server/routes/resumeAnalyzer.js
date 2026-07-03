@@ -1,6 +1,7 @@
 const { parseResume } = require("../services/resumeParser");
 const express = require("express");
 const multer = require("multer");
+const { buildResumeProfile } = require("../services/resumeStructurer");
 
 const router = express.Router();
 
@@ -19,29 +20,37 @@ router.post(
         try {
 
             if (!req.file) {
+
                 return res.status(400).json({
-                    success: false,
-                    message: "Resume not uploaded"
+
+                    success:false,
+
+                    message:"Resume not uploaded"
+
                 });
+
             }
 
             const { role, jobDescription } = req.body;
 
             const resumeText = await parseResume(req.file.buffer);
 
+            const structuredResume =
+                await buildResumeProfile(resumeText);
+
             res.json({
 
-                success: true,
+                success:true,
 
                 role,
 
                 jobDescription,
 
-                resumeText
+                structuredResume
 
             });
 
-        } catch (error) {
+        } catch(error){
 
             console.error(error);
 

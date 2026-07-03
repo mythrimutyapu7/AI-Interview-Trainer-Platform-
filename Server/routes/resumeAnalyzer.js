@@ -1,3 +1,4 @@
+const { parseResume } = require("../services/resumeParser");
 const express = require("express");
 const multer = require("multer");
 
@@ -15,22 +16,44 @@ router.post(
     upload.single("resume"),
     async (req, res) => {
 
-        if (!req.file) {
-            return res.status(400).json({
-                success: false,
-                message: "Resume not uploaded"
+        try {
+
+            if (!req.file) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Resume not uploaded"
+                });
+            }
+
+            const { role, jobDescription } = req.body;
+
+            const resumeText = await parseResume(req.file.buffer);
+
+            res.json({
+
+                success: true,
+
+                role,
+
+                jobDescription,
+
+                resumeText
+
             });
+
+        } catch (error) {
+
+            console.error(error);
+
+            res.status(500).json({
+
+                success:false,
+
+                message:error.message
+
+            });
+
         }
-
-        const { role, jobDescription } = req.body;
-
-        res.json({
-            success: true,
-            filename: req.file.originalname,
-            role,
-            jobDescription,
-            size: req.file.size
-        });
 
     }
 );

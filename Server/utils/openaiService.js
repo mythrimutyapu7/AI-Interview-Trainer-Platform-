@@ -546,4 +546,9 @@ ${resumeText}
   }
 
 }
-module.exports = { evaluateResponse, generateHRQuestion, generateTechnicalQuestions };
+module.exports = {
+    evaluateResponse,
+    generateHRQuestion,
+    generateTechnicalQuestions,
+    structureResume
+};

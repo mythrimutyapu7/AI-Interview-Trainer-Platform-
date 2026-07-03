@@ -494,44 +494,74 @@ ${resumeText}
 
   try {
 
-    let content;
+    let content = null;
 
+    // ---------- Try Gemini First ----------
     if (hasGeminiKey) {
 
-      content = await callGemini(prompt, true);
+      try {
 
-    } else if (openai) {
+        console.log("Using Gemini for Resume Structuring...");
 
-      const completion = await openai.chat.completions.create({
+        content = await callGemini(prompt, true);
 
-        model: "gpt-4o-mini",
+      } catch (geminiError) {
 
-        messages: [
+        console.error("Gemini Failed:", geminiError.message);
 
-          {
-            role: "system",
-            content:
-              "You are an expert resume parser. Return JSON only."
+      }
+
+    }
+
+    // ---------- Fallback to OpenAI ----------
+    if (!content && openai) {
+
+      try {
+
+        console.log("Using OpenAI for Resume Structuring...");
+
+        const completion = await openai.chat.completions.create({
+
+          model: "gpt-4o-mini",
+
+          messages: [
+
+            {
+              role: "system",
+              content:
+                "You are an expert resume parser. Return ONLY valid JSON."
+            },
+
+            {
+              role: "user",
+              content: prompt
+            }
+
+          ],
+
+          response_format: {
+            type: "json_object"
           },
 
-          {
-            role: "user",
-            content: prompt
-          }
+          temperature: 0
 
-        ],
+        });
 
-        response_format: {
-          type: "json_object"
-        }
+        content = completion.choices[0].message.content;
 
-      });
+      } catch (openAIError) {
 
-      content = completion.choices[0].message.content;
+        console.error("OpenAI Failed:", openAIError.message);
 
-    } else {
+      }
 
-      throw new Error("No AI model configured.");
+    }
+
+    if (!content) {
+
+      throw new Error(
+        "Both Gemini and OpenAI are currently unavailable."
+      );
 
     }
 

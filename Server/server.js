@@ -15,6 +15,7 @@ const codeExecutorRoutes = require("./routes/codeExecutor");
 const { initProfileRoutes } = require("./routes/profile");
 const { evaluateResponse, generateHRQuestion, generateTechnicalQuestions } = require("./utils/openaiService");
 const { PDFParse } = require("pdf-parse");
+const resumeAnalyzerRoutes = require("./routes/resumeAnalyzer");
 
 require("dotenv").config();
 

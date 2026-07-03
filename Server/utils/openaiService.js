@@ -423,4 +423,127 @@ Provide the response ONLY as a valid JSON array of objects, containing exactly 3
   return FALLBACK_TECH_QUESTIONS;
 }
 
+/**
+ * Convert raw resume text into structured JSON
+ */
+async function structureResume(resumeText) {
+
+  const prompt = `
+You are an expert resume parser.
+
+Convert the following resume into a structured JSON object.
+
+Return ONLY valid JSON.
+
+Schema:
+
+{
+  "name": "",
+  "email": "",
+  "phone": "",
+  "summary": "",
+
+  "skills": [],
+
+  "experience": [
+
+    {
+      "company": "",
+      "designation": "",
+      "duration": "",
+      "description": []
+    }
+
+  ],
+
+  "projects":[
+
+    {
+      "title":"",
+      "technologies":[],
+      "description":[]
+    }
+
+  ],
+
+  "education":[
+
+    {
+      "institution":"",
+      "degree":"",
+      "duration":"",
+      "grade":""
+    }
+
+  ],
+
+  "certifications":[]
+
+}
+
+Resume:
+
+${resumeText}
+
+`;
+
+  const hasGeminiKey = !!(
+    process.env.GEMINI_API_KEY ||
+    isGeminiKey(process.env.OPENAI_API_KEY)
+  );
+
+  try {
+
+    let content;
+
+    if (hasGeminiKey) {
+
+      content = await callGemini(prompt, true);
+
+    } else if (openai) {
+
+      const completion = await openai.chat.completions.create({
+
+        model: "gpt-4o-mini",
+
+        messages: [
+
+          {
+            role: "system",
+            content:
+              "You are an expert resume parser. Return JSON only."
+          },
+
+          {
+            role: "user",
+            content: prompt
+          }
+
+        ],
+
+        response_format: {
+          type: "json_object"
+        }
+
+      });
+
+      content = completion.choices[0].message.content;
+
+    } else {
+
+      throw new Error("No AI model configured.");
+
+    }
+
+    return JSON.parse(content);
+
+  } catch (err) {
+
+    console.error("Resume Structuring Error:", err);
+
+    throw err;
+
+  }
+
+}
 module.exports = { evaluateResponse, generateHRQuestion, generateTechnicalQuestions };

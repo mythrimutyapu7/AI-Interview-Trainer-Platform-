@@ -13,7 +13,7 @@ const upload = multer({
 router.post(
     "/analyze",
     upload.single("resume"),
-    (req, res) => {
+    async (req, res) => {
 
         if (!req.file) {
             return res.status(400).json({

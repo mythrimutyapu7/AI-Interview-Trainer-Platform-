@@ -105,6 +105,7 @@ app.get("/api/health", (req, res) => {
 
 // Code Executor
 app.use("/api", codeExecutorRoutes);
+app.use("/api/resume", resumeAnalyzerRoutes);
 
 // Auth
 app.post("/api/auth/signup", (req, res) => authFunctions.signUp(req, res));

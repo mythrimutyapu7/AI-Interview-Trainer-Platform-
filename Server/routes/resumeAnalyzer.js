@@ -5,6 +5,11 @@ const { buildResumeProfile } = require("../services/resumeStructurer");
 
 const router = express.Router();
 
+const {
+    extractSkillsFromJD,
+    compareSkills
+} = require("../services/ruleEngine");
+
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {

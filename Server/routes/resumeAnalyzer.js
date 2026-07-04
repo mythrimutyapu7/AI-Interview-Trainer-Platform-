@@ -1,0 +1,86 @@
+const { parseResume } = require("../services/resumeParser");
+const express = require("express");
+const multer = require("multer");
+const { buildResumeProfile } = require("../services/resumeStructurer");
+
+const router = express.Router();
+
+const {
+    extractSkillsFromJD,
+    compareSkills
+} = require("../services/ruleEngine");
+
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 10 * 1024 * 1024
+    }
+});
+
+router.post(
+    "/analyze",
+    upload.single("resume"),
+    async (req, res) => {
+
+        try {
+
+            if (!req.file) {
+
+                return res.status(400).json({
+
+                    success:false,
+
+                    message:"Resume not uploaded"
+
+                });
+
+            }
+
+            const { role, jobDescription } = req.body;
+
+            const resumeText = await parseResume(req.file.buffer);
+
+            const structuredResume =
+                await buildResumeProfile(resumeText);
+
+            const jdSkills =
+    extractSkillsFromJD(jobDescription);
+
+const skillAnalysis =
+    compareSkills(
+        structuredResume.skills,
+        jdSkills
+    );
+
+            res.json({
+
+    success:true,
+
+    role,
+
+    jobDescription,
+
+    structuredResume,
+
+    skillAnalysis
+
+});
+
+        } catch(error){
+
+            console.error(error);
+
+            res.status(500).json({
+
+                success:false,
+
+                message:error.message
+
+            });
+
+        }
+
+    }
+);
+
+module.exports = router;

@@ -1,6 +1,7 @@
 // Here recordings will be found
 import React, { useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight, PlayCircle, X } from "lucide-react";
+import { makeAuthenticatedRequest } from "../utils/authUtils";
 
 // Get API URL from environment or fallback to localhost
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
@@ -13,11 +14,14 @@ export default function RecordingsDashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_BASE_URL}/api/recordings`)
-      .then((res) => res.json())
+    makeAuthenticatedRequest(`${API_BASE_URL}/api/recordings`)
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to fetch recordings");
+        return res.json();
+      })
       .then((data) => {
         // Keep only recordings with a valid path
-        const existing = data.filter((rec) => rec.path);
+        const existing = Array.isArray(data) ? data.filter((rec) => rec.path) : [];
         setRecordings(existing);
       })
       .catch((err) => console.error("Error fetching recordings:", err));

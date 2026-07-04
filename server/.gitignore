@@ -5,3 +5,7 @@ uploads/
 logs/
 *.log
 .DS_Store
+uploads/*
+!uploads/.gitkeep
+
+vector/

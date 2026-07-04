@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react';
-import { LayoutDashboard, User, BarChart, LineChart, PieChart, FileText, CheckCircle, XCircle } from 'lucide-react';
+import { LayoutDashboard, User, BarChart, LineChart, FileText, CheckCircle, XCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { makeAuthenticatedRequest } from '../utils/authUtils';
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
 
 // A helper component to dynamically render the Bar Chart
 const ScoreBarChart = ({ topicAnalysis }) => {
   const maxScore = 100;
-  const navigate = useNavigate();
   return (
     <div className="flex w-full h-48 items-end justify-around p-4 space-x-4">
       {topicAnalysis.map((item) => {
@@ -14,7 +15,7 @@ const ScoreBarChart = ({ topicAnalysis }) => {
         const barColor = item.score > 80 ? 'bg-green-500' : item.score > 60 ? 'bg-yellow-500' : 'bg-red-500';
 
         return (
-          <div key={item.topic} className="flex flex-col items-center group cursor-help">
+          <div key={item.topic} className="flex flex-col items-center group cursor-help relative">
             <div
               style={{ height: heightPercentage }}
               className={`w-10 ${barColor} rounded-t-lg transition-all duration-500 ease-out shadow-md hover:shadow-xl`}
@@ -23,7 +24,7 @@ const ScoreBarChart = ({ topicAnalysis }) => {
               {item.topic.split(' ')[0]}
             </p>
             {/* Tooltip on hover */}
-            <span className="absolute bottom-full mb-2 hidden group-hover:block px-3 py-1 bg-gray-800 text-white text-xs rounded-lg shadow-lg">
+            <span className="absolute bottom-full mb-2 hidden group-hover:block px-3 py-1 bg-gray-800 text-white text-xs rounded-lg shadow-lg z-25 whitespace-nowrap">
               {item.topic}: {item.score}%
             </span>
           </div>
@@ -36,7 +37,17 @@ const ScoreBarChart = ({ topicAnalysis }) => {
 // A helper component to dynamically render a simple Line Chart using SVG
 const ProgressLineChart = ({ progress }) => {
   if (!progress || progress.length < 2) {
-    return <div className="text-center text-gray-500">Not enough data to draw line chart.</div>;
+    // If we only have 1 data point, we need at least 2 to draw a line. Let's make an artificial start or single dot
+    if (progress && progress.length === 1) {
+      return (
+        <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full h-full">
+          <circle cx="50" cy={100 - progress[0]} r="4" fill="#1e40af" />
+          <line x1="0" y1="50" x2="100" y2="50" stroke="#d1d5db" strokeDasharray="1,1" strokeWidth="0.5" />
+          <text x="0" y="52" fill="#6b7280" fontSize="4" dominantBaseline="hanging">50%</text>
+        </svg>
+      );
+    }
+    return <div className="text-center text-gray-500 py-10">Complete more interviews to view progress trend.</div>;
   }
   
   const maxProgress = 100;
@@ -86,36 +97,22 @@ export default function InterviewReport() {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
  
-   // A useEffect hook to simulate fetching data
    useEffect(() => {
-     const timer = setTimeout(() => {
-       setData({
-         topicsCovered: ['Data Structures', 'Algorithms', 'System Design', 'Behavioral Questions'],
-         topicAnalysis: [
-           { topic: 'Data Structures', score: 85, analysis: 'Strong understanding of core concepts. Could practice more complex tree and graph problems.' },
-           { topic: 'Algorithms', score: 92, analysis: 'Excellent performance on dynamic programming and greedy algorithms. Showed creative problem-solving skills.' },
-           { topic: 'System Design', score: 70, analysis: 'Good high-level overview. Needs more depth on specific components like load balancing and databases.' },
-           { topic: 'Behavioral Questions', score: 95, analysis: 'Showed maturity and alignment with company values.' },
-         ],
-         progress: [10, 20, 35, 50, 75, 90], // Dummy data for the line chart
-         summary: 'The candidate demonstrated a solid foundation in both technical and soft skills. Strengths include a strong grasp of algorithms and problem-solving. Areas for improvement involve a deeper dive into system design principles and component-level understanding.',
-         pros: [
-           'Strong problem-solving ability',
-           'Clear and concise communication',
-           'Excellent grasp of core algorithms',
-           'Good command of C++ (as mentioned by the user!)'
-         ],
-         cons: [
-           'Limited experience with distributed systems',
-           'Could provide more detailed examples from past projects',
-           'Initial hesitation on a few conceptual questions'
-         ],
-         suggestions: 'Recommend a follow-up interview focused on a deep-dive system design problem. Encourage a review of common design patterns and trade-offs. Additionally, provide resources for a quick refresher on advanced tree traversals.',
+     makeAuthenticatedRequest(`${API_BASE_URL}/api/interview/report`)
+       .then((res) => {
+         if (!res.ok) throw new Error("Failed to fetch report");
+         return res.json();
+       })
+       .then((resData) => {
+         if (resData.success) {
+           setData(resData.data);
+         }
+         setLoading(false);
+       })
+       .catch((err) => {
+         console.error("Error fetching report:", err);
+         setLoading(false);
        });
-       setLoading(false);
-     }, 2000);
-
-     return () => clearTimeout(timer);
    }, []);
 
    // Conditional rendering for the loading state
@@ -133,6 +130,44 @@ export default function InterviewReport() {
      );
    }
 
+   // Handle Empty State
+   if (!data) {
+     return (
+       <div className="flex bg-gray-50 text-gray-800 min-h-screen font-sans">
+         <aside className="hidden md:block w-64 bg-white border-r border-gray-200 p-4 sticky top-0 h-screen shadow-lg">
+           <div className="text-2xl font-bold text-blue-600 mb-8">Analyzer <span className="text-sm font-light">v1.0</span></div>
+           <nav className="space-y-2">
+             <a href="#" className="flex items-center space-x-3 p-3 rounded-lg text-gray-600 transition duration-150 hover:bg-gray-100" onClick={() => navigate('/dashboard')}>
+               <LayoutDashboard className="w-5 h-5" />
+               <span>Dashboard</span>
+             </a>
+             <a href="#" className="flex items-center space-x-3 p-3 rounded-lg text-gray-600 transition duration-150 hover:bg-gray-100" onClick={() => navigate('/profile')}>
+               <User className="w-5 h-5" />
+               <span>Candidate Profile</span>
+             </a>
+           </nav>
+         </aside>
+         <main className="flex-1 p-4 sm:p-8 flex flex-col items-center justify-center">
+           <div className="max-w-md text-center p-8 bg-white rounded-2xl shadow-lg border border-gray-100">
+             <div className="w-20 h-20 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6 text-4xl shadow-sm">
+               📊
+             </div>
+             <h2 className="text-2xl font-bold text-gray-800 mb-3">No Analytics Available</h2>
+             <p className="text-gray-600 mb-6">
+               You haven't completed any mock interviews yet. Take an interview in the Speech Section to generate your dynamic feedback report.
+             </p>
+             <button
+               onClick={() => navigate('/start-interview')}
+               className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold shadow-md hover:shadow-lg transition-all"
+             >
+               Start Your First Interview
+             </button>
+           </div>
+         </main>
+       </div>
+     );
+   }
+
    // Calculate overall score for a metric card
    const overallScore = data.topicAnalysis.reduce((acc, item) => acc + item.score, 0) / data.topicAnalysis.length;
 
@@ -144,11 +179,11 @@ export default function InterviewReport() {
       <aside className="hidden md:block w-64 bg-white border-r border-gray-200 p-4 sticky top-0 h-screen shadow-lg">
         <div className="text-2xl font-bold text-blue-600 mb-8">Analyzer <span className="text-sm font-light">v1.0</span></div>
         <nav className="space-y-2">
-          <a href="#" className="flex items-center space-x-3 p-3 rounded-lg bg-blue-50 text-blue-700 font-semibold transition duration-150 hover:bg-blue-100"onClick={() => navigate('/dashboard')}>
+          <a href="#" className="flex items-center space-x-3 p-3 rounded-lg bg-blue-50 text-blue-700 font-semibold transition duration-150 hover:bg-blue-100" onClick={() => navigate('/dashboard')}>
             <LayoutDashboard className="w-5 h-5" />
             <span>Dashboard</span>
           </a>
-          <a href="#" className="flex items-center space-x-3 p-3 rounded-lg text-gray-600 transition duration-150 hover:bg-gray-100"onClick={() => navigate('/profile')}>
+          <a href="#" className="flex items-center space-x-3 p-3 rounded-lg text-gray-600 transition duration-150 hover:bg-gray-100" onClick={() => navigate('/profile')}>
             <User className="w-5 h-5" />
             <span>Candidate Profile</span>
           </a>
@@ -157,7 +192,7 @@ export default function InterviewReport() {
 
       {/* Main Content Area */}
       <main className="flex-1 p-4 sm:p-8">
-        <h1 className="text-4xl font-extrabold text-gray-900 mb-8 border-b pb-4">Interview Report: Software Engineer</h1>
+        <h1 className="text-4xl font-extrabold text-gray-900 mb-8 border-b pb-4">Interview Report: Performance Insights</h1>
 
         {/* Metric Cards */}
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -191,7 +226,7 @@ export default function InterviewReport() {
                     <ScoreBarChart topicAnalysis={data.topicAnalysis} />
                 </div>
                 {/* Detailed Analysis List */}
-                <div className="space-y-4">
+                <div className="space-y-4 max-h-64 overflow-y-auto pr-2">
                     {data.topicAnalysis.map((item, index) => (
                         <div key={index} className="p-3 border-b hover:bg-blue-50 transition-colors duration-150 rounded-md">
                             <div className="flex justify-between items-center mb-1">
@@ -213,7 +248,7 @@ export default function InterviewReport() {
             <div className="w-full h-48 flex-grow flex items-center justify-center p-4 border rounded-lg bg-gray-50">
               <ProgressLineChart progress={data.progress} />
             </div>
-            <p className="text-sm text-gray-500 mt-4 text-center">Conceptual 'progress' over the interview timeline (simulated).</p>
+            <p className="text-sm text-gray-500 mt-4 text-center">Score progression across your last 6 interviews.</p>
           </div>
 
         </section>
@@ -223,7 +258,7 @@ export default function InterviewReport() {
             
             {/* Summary */}
             <div className="p-6 bg-white rounded-xl shadow-xl border-t-4 border-blue-600">
-                <h2 className="text-2xl font-semibold mb-4 text-gray-800">Brief Summary</h2>
+                <h2 className="text-2xl font-semibold mb-4 text-gray-800 flex items-center"><FileText className="w-5 h-5 mr-2 text-blue-600" /> Brief Summary</h2>
                 <p className="text-gray-600 leading-relaxed italic">{data.summary}</p>
             </div>
 
@@ -268,5 +303,5 @@ export default function InterviewReport() {
 
       </main>
     </div>
-  );
+   );
 }

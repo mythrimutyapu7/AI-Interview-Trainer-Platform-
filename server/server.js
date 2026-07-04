@@ -13,6 +13,9 @@ const { initPassport } = require("./oauth");
 const { upload, transcribeAudio, transcribeStream } = require("./whisper");
 const codeExecutorRoutes = require("./routes/codeExecutor");
 const { initProfileRoutes } = require("./routes/profile");
+const { evaluateResponse, generateHRQuestion, generateTechnicalQuestions } = require("./utils/openaiService");
+const { PDFParse } = require("pdf-parse");
+const resumeAnalyzerRoutes = require("./routes/resumeAnalyzer");
 
 require("dotenv").config();
 
@@ -97,11 +100,12 @@ app.get("/api/health", (req, res) => {
 });
 
 // Payments
-const paymentRoutes = require("./Models/Payments");
-app.use(paymentRoutes);
+//const paymentRoutes = require("./Models/Payments");
+//app.use(paymentRoutes);
 
 // Code Executor
 app.use("/api", codeExecutorRoutes);
+app.use("/api/resume", resumeAnalyzerRoutes);
 
 // Auth
 app.post("/api/auth/signup", (req, res) => authFunctions.signUp(req, res));
@@ -176,6 +180,14 @@ app.post("/api/interview/response", authenticateToken, async (req, res) => {
       });
     }
 
+    // Perform AI evaluation
+    const evaluation = await evaluateResponse(
+      question,
+      response,
+      category || "General",
+      difficulty || "Medium"
+    );
+
     const interviewResponse = {
       userId: req.user._id,
       userEmail: req.user.email,
@@ -193,6 +205,7 @@ app.post("/api/interview/response", authenticateToken, async (req, res) => {
         confidence: parseFloat(confidence),
         timestamp: new Date(),
       },
+      evaluation,
       metadata: {
         createdAt: new Date(),
         sessionId: req.headers["x-session-id"] || null,
@@ -213,6 +226,7 @@ app.post("/api/interview/response", authenticateToken, async (req, res) => {
         timestamp: interviewResponse.response.timestamp,
         wordCount: interviewResponse.response.wordCount,
         timeSpent: interviewResponse.response.timeSpent,
+        evaluation,
       },
     });
   } catch (error) {
@@ -563,6 +577,27 @@ app.post("/api/transcribe/stream", upload.single("audio"), transcribeStream);
 
 const { uploadToSupabase, deleteFromSupabase } = require('./utils/storageService');
 
+// Multer setup for document memory storage (Resume/JD uploads)
+const uploadDocumentMemory = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB limit
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = [
+      'application/pdf',
+      'text/plain',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/msword'
+    ];
+    if (allowedTypes.includes(file.mimetype) || file.originalname.endsWith('.pdf') || file.originalname.endsWith('.txt') || file.originalname.endsWith('.docx') || file.originalname.endsWith('.doc')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type. Only PDF, TXT, and Word documents are allowed.'));
+    }
+  }
+});
+
 // Multer setup for memory storage (we'll upload to Supabase)
 const uploadRecordingMemory = multer({ 
   storage: multer.memoryStorage(),
@@ -580,13 +615,13 @@ const uploadRecordingMemory = multer({
 });
 
 // Save Recording with Supabase
-app.post("/api/recordings", uploadRecordingMemory.single("file"), async (req, res) => {
+app.post("/api/recordings", authenticateToken, uploadRecordingMemory.single("file"), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ success: false, message: "No file provided" });
     }
 
-    console.log(`📹 Receiving recording: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);
+    console.log(`📹 Receiving recording for user ${req.user._id}: ${req.file.originalname} (${(req.file.size / 1024 / 1024).toFixed(2)} MB)`);
 
     // Upload to Supabase
     const uploadResult = await uploadToSupabase(
@@ -607,6 +642,7 @@ app.post("/api/recordings", uploadRecordingMemory.single("file"), async (req, re
 
     // Save metadata to MongoDB
     const recording = {
+      userId: req.user._id,
       filename: req.file.originalname,
       path: uploadResult.path,        // Supabase path
       url: uploadResult.url,           // Public URL
@@ -636,15 +672,15 @@ app.post("/api/recordings", uploadRecordingMemory.single("file"), async (req, re
 
 
 // Fetch Recordings from Supabase
-app.get("/api/recordings", async (req, res) => {
+app.get("/api/recordings", authenticateToken, async (req, res) => {
   try {
     const recordings = await db
       .collection("recordings")
-      .find()
+      .find({ userId: req.user._id })
       .sort({ createdAt: -1 })
       .toArray();
 
-    console.log(`📋 Fetched ${recordings.length} recordings`);
+    console.log(`📋 Fetched ${recordings.length} recordings for user ${req.user._id}`);
     res.json(recordings);
   } catch (err) {
     console.error('❌ Error fetching recordings:', err);
@@ -657,16 +693,16 @@ app.get("/api/recordings", async (req, res) => {
 });
 
 // Delete Recording from Supabase
-app.delete("/api/recordings/:id", async (req, res) => {
+app.delete("/api/recordings/:id", authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const recording = await db.collection("recordings").findOne({ _id: new ObjectId(id) });
+    const recording = await db.collection("recordings").findOne({ _id: new ObjectId(id), userId: req.user._id });
 
     if (!recording) {
       return res.status(404).json({ success: false, message: "Recording not found" });
     }
 
-    console.log(`🗑️  Deleting recording: ${recording.filename}`);
+    console.log(`🗑️  Deleting recording: ${recording.filename} for user ${req.user._id}`);
 
     // Delete from Supabase
     if (recording.path) {
@@ -688,6 +724,49 @@ app.delete("/api/recordings/:id", async (req, res) => {
       message: "Error deleting recording",
       error: err.message 
     });
+  }
+});
+
+// Get a random HR question
+app.get("/api/interview/questions/hr", authenticateToken, async (req, res) => {
+  try {
+    const question = await generateHRQuestion();
+    res.json({ success: true, question });
+  } catch (err) {
+    console.error("❌ Error generating HR question:", err);
+    res.status(500).json({ success: false, message: "Error generating question", error: err.message });
+  }
+});
+
+// Generate custom technical questions from Resume or JD
+app.post("/api/interview/questions/technical", authenticateToken, uploadDocumentMemory.single("file"), async (req, res) => {
+  try {
+    let extractedText = "";
+
+    if (req.file) {
+      console.log(`📄 Received document upload for analysis: ${req.file.originalname} (${req.file.mimetype})`);
+      if (req.file.mimetype === 'application/pdf') {
+        const parser = new PDFParse({ data: req.file.buffer });
+        const parsed = await parser.getText();
+        extractedText = parsed.text;
+      } else {
+        // Fallback/standard txt reading
+        extractedText = req.file.buffer.toString('utf-8');
+      }
+    } else if (req.body.text) {
+      console.log(`📝 Received raw text input for technical question generation`);
+      extractedText = req.body.text;
+    }
+
+    if (!extractedText || extractedText.trim().length === 0) {
+      return res.status(400).json({ success: false, message: "No text content found in file or request body." });
+    }
+
+    const questions = await generateTechnicalQuestions(extractedText);
+    res.json({ success: true, questions });
+  } catch (err) {
+    console.error("❌ Error generating technical questions:", err);
+    res.status(500).json({ success: false, message: "Error generating technical questions", error: err.message });
   }
 });
 

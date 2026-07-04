@@ -10,9 +10,17 @@ require('dotenv').config();
 console.log('OpenAI API Key loaded:', process.env.OPENAI_API_KEY ? 'Yes' : 'No');
 
 // Configure OpenAI
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+let openai = null;
+const isGeminiKey = (key) => key && (key.startsWith("AQ.") || key.startsWith("AIzaSy"));
+if (process.env.OPENAI_API_KEY && !isGeminiKey(process.env.OPENAI_API_KEY)) {
+  try {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  } catch (err) {
+    console.error("⚠️ Failed to initialize OpenAI client:", err.message);
+  }
+}
 
 // Configure multer for file uploads
 const storage = multer.memoryStorage();
@@ -38,8 +46,8 @@ async function transcribeAudio(req, res) {
       return res.status(400).json({ error: 'No audio file provided' });
     }
 
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: 'OpenAI API key not configured' });
+    if (!openai) {
+      return res.status(500).json({ error: 'OpenAI Whisper is not initialized. A valid OpenAI API key is required.' });
     }
 
     // Create a temporary file from the buffer
@@ -102,8 +110,8 @@ async function transcribeStream(req, res) {
       return res.status(400).json({ error: 'No audio chunk provided' });
     }
 
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ error: 'OpenAI API key not configured' });
+    if (!openai) {
+      return res.status(500).json({ error: 'OpenAI Whisper is not initialized. A valid OpenAI API key is required.' });
     }
 
     // Create a temporary file from the buffer

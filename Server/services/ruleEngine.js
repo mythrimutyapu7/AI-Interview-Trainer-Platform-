@@ -1,6 +1,10 @@
 /**
  * Extract skills from Job Description
+ * 
  */
+const {
+    normalizeSkills
+} = require("./skillNormalizer");
 function extractSkillsFromJD(jobDescription) {
 
     const commonSkills = [
@@ -63,67 +67,45 @@ function extractSkillsFromJD(jobDescription) {
  * Compare Resume Skills with JD Skills
  */
 
-function compareSkills(resumeSkills, jdSkills){
+function compareSkills(resumeSkills, jdSkills) {
 
     const matched = [];
-
     const missing = [];
-
     const extra = [];
 
-    const resume = resumeSkills.map(s=>s.toLowerCase());
+    // Normalize both arrays
+    const normalizedResume = normalizeSkills(resumeSkills);
+    const normalizedJD = normalizeSkills(jdSkills);
 
-    const jd = jdSkills.map(s=>s.toLowerCase());
+    // Check matched & missing
+    normalizedJD.forEach((skill, index) => {
 
-    jdSkills.forEach(skill=>{
-
-        if(resume.includes(skill.toLowerCase())){
-
-            matched.push(skill);
-
-        }else{
-
-            missing.push(skill);
-
+        if (normalizedResume.includes(skill)) {
+            matched.push(jdSkills[index]);
+        } else {
+            missing.push(jdSkills[index]);
         }
 
     });
 
-    resumeSkills.forEach(skill=>{
+    // Check extra
+    normalizedResume.forEach((skill, index) => {
 
-        if(!jd.includes(skill.toLowerCase())){
-
-            extra.push(skill);
-
+        if (!normalizedJD.includes(skill)) {
+            extra.push(resumeSkills[index]);
         }
 
     });
 
     const percentage =
-        jdSkills.length===0
-            ?100
-            :Math.round(
-                (matched.length/jdSkills.length)*100
-            );
+        normalizedJD.length === 0
+            ? 100
+            : Math.round((matched.length / normalizedJD.length) * 100);
 
-    return{
-
+    return {
         matched,
-
         missing,
-
         extra,
-
         percentage
-
     };
-
 }
-
-module.exports={
-
-    extractSkillsFromJD,
-
-    compareSkills
-
-};

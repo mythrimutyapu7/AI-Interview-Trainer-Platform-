@@ -109,3 +109,7 @@ function compareSkills(resumeSkills, jdSkills) {
         percentage
     };
 }
+module.exports = {
+    extractSkillsFromJD,
+    compareSkills
+};

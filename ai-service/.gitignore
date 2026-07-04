@@ -1,5 +1,0 @@
-venv/
-**pycache**/
-uploads/
-vectorstore/
-.env

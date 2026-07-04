@@ -576,9 +576,123 @@ ${resumeText}
   }
 
 }
+
+/**
+ * Extract structured requirements from a Job Description
+ */
+async function extractJobRequirements(jobDescription) {
+
+  const prompt = `
+You are an expert Technical Recruiter.
+
+Analyze the following Job Description.
+
+Return ONLY valid JSON.
+
+Do not explain.
+
+Schema:
+
+{
+  "role": "",
+  "requiredSkills": [],
+  "preferredSkills": [],
+  "minimumExperience": "",
+  "education": "",
+  "certifications": [],
+  "responsibilities": []
+}
+
+Job Description:
+
+${jobDescription}
+`;
+
+  const hasGeminiKey = !!(
+    process.env.GEMINI_API_KEY ||
+    isGeminiKey(process.env.OPENAI_API_KEY)
+  );
+
+  let content = null;
+
+  // ---------- Gemini ----------
+  if (hasGeminiKey) {
+
+    try {
+
+      console.log("Using Gemini for JD Parsing...");
+
+      content = await callGemini(prompt, true);
+
+    } catch (err) {
+
+      console.error("Gemini JD Parser Failed:", err.message);
+
+    }
+
+  }
+
+  // ---------- OpenAI ----------
+  if (!content && openai) {
+
+    try {
+
+      console.log("Using OpenAI for JD Parsing...");
+
+      const completion =
+        await openai.chat.completions.create({
+
+          model: "gpt-4o-mini",
+
+          messages: [
+
+            {
+              role: "system",
+              content:
+                "Return ONLY JSON."
+            },
+
+            {
+              role: "user",
+              content: prompt
+            }
+
+          ],
+
+          response_format: {
+            type: "json_object"
+          },
+
+          temperature: 0
+
+        });
+
+      content =
+        completion.choices[0].message.content;
+
+    } catch (err) {
+
+      console.error("OpenAI JD Parser Failed:", err.message);
+
+    }
+
+  }
+
+  if (!content) {
+
+    throw new Error(
+      "Unable to parse Job Description."
+    );
+
+  }
+
+  return JSON.parse(content);
+
+}
 module.exports = {
     evaluateResponse,
     generateHRQuestion,
     generateTechnicalQuestions,
-    structureResume
+  structureResume,
+  extractJobRequirements
 };

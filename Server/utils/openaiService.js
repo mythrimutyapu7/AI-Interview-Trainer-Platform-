@@ -690,9 +690,15 @@ ${jobDescription}
 
 }
 module.exports = {
+
     evaluateResponse,
+
     generateHRQuestion,
+
     generateTechnicalQuestions,
-  structureResume,
-  extractJobRequirements
+
+    structureResume,
+
+    extractJobRequirements
+
 };

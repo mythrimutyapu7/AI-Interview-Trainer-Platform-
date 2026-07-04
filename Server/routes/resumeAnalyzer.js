@@ -43,17 +43,28 @@ router.post(
             const structuredResume =
                 await buildResumeProfile(resumeText);
 
+            const jdSkills =
+    extractSkillsFromJD(jobDescription);
+
+const skillAnalysis =
+    compareSkills(
+        structuredResume.skills,
+        jdSkills
+    );
+
             res.json({
 
-                success:true,
+    success:true,
 
-                role,
+    role,
 
-                jobDescription,
+    jobDescription,
 
-                structuredResume
+    structuredResume,
 
-            });
+    skillAnalysis
+
+});
 
         } catch(error){
 
